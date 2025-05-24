@@ -159,3 +159,20 @@ def chat_helper(command, prompt):
     print(command)
     # the first is technically also the previous command
     return command, command
+
+def get_llm_response(full_prompt_string):
+    data = {
+        "model": get_model(), # Assumes get_model() is defined
+        "messages": [{"role": "user", "content": full_prompt_string}]
+    }
+    try:
+        # Assuming make_request is defined and handles API call and errors
+        body, response = make_request(URL, HEADERS, data=bytes(json.dumps(data), encoding="utf-8"))
+        body = json.loads(body)
+        content = body['choices'][0]['message']['content']
+        return content.strip()
+    except Exception as e:
+        # Print the error to stderr for better visibility in GDB/LLDB context
+        import sys
+        print(f"Error communicating with LLM: {str(e)}", file=sys.stderr)
+        return f"Error communicating with LLM: {str(e)}"
