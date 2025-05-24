@@ -1,4 +1,4 @@
-# ChatGDB
+# AI-PoweredGDB
 Harness the power of ChatGPT inside the GDB/LLDB debugger!
 
 
