@@ -21,6 +21,11 @@ def get_key():
         # get appropriate api key
         with open(path) as f:
             key = [line.strip() for line in f]
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"API key file not found at {path}. "
+            f"Please set your API key using 'chatgdb -k <YOUR_API_KEY>'."
+        )
         for k in key:
             if k.startswith("OPENAI_KEY"):
                 secret = k.split('"')[1::2]
@@ -40,17 +45,22 @@ def get_key():
 def get_model():
     """Gets model from model file
 
-    Returns: (str) model
+    Returns: (str) model name
     Raises: FileNotFoundError: If the model file is not found.
     """
-    model = []
-    model_name = ""
+    model_name = []
+    model = ""
     # gets path of this script - OS independent
     path = dirname(abspath(getfile(currentframe()))) + "/.model.txt"
     try:
-        # get appropriate api key
+        # get appropriate model
         with open(path) as f:
-            model = [line.strip() for line in f]
+            model_name = [line.strip() for line in f]
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"Model configuration file not found at {path}. "
+            f"Please set your model using 'chatgdb -m <MODEL_NAME>'."
+        )
         for m in model:
             if m.startswith("MODEL"):
                 model_name = m.split('"')[1::2]
@@ -65,19 +75,24 @@ def get_model():
     return model_name[0]
 
 def get_url():
-    """Gets api url from url file
+    """Gets url from url file
 
-    Returns: (str) url
+    Returns: (str) base url
     Raises: FileNotFoundError: If the url file is not found.
     """
-    url = []
-    url_name = ""
+    url_name = []
+    url = ""
     # gets path of this script - OS independent
     path = dirname(abspath(getfile(currentframe()))) + "/.url.txt"
     try:
-        # get appropriate api url
+        # get appropriate model
         with open(path) as f:
-            url = [line.strip() for line in f]
+            url_name = [line.strip() for line in f]
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"URL configuration file not found at {path}. "
+            f"Please set your URL using 'chatgdb -u <API_URL>'."
+        )
         for u in url:
             if u.startswith("URL"):
                 url_name = u.split('"')[1::2]

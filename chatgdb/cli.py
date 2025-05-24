@@ -63,45 +63,45 @@ def main():
 
     args = parser.parse_args()
 
-    # Attempt to load existing config to check if files exist before writing
-    # This is more for robust initialization than just writing new files
     try:
-        # These calls are primarily for their side effect of checking file existence if no args are given
-        # If utils.py's get_key/model/url are called at module load time for HEADERS/URL,
-        # an error might occur there first if files are missing.
-        # This depends on Python's import and execution order.
-        from chatgdb import utils # Ensure utils is imported to access its functions
-        if not any([args.key, args.model, args.url]):
-             # Check if essential config is missing if no arguments are passed to set them
+        if args.key:
+            set_key(args.key)
+            print(f"API key set successfully. Stored in {PATH}/.secret.txt")
+
+        if args.model:
+            set_model(args.model)
+            print(f"Model set to {args.model}. Stored in {PATH}/.model.txt")
+
+        if args.url:
+            set_url(args.url)
+            print(f"URL set to {args.url}. Stored in {PATH}/.url.txt")
+
+        # Display current configuration if no arguments are passed
+        if not any(vars(args).values()): # Check if any arguments were passed
+            print("Current ChatGDB Configuration:")
             try:
-                utils.get_key() 
-                utils.get_model()
-                utils.get_url()
+                key = utils.get_key()
+                print(f"  API Key: {'*' * (len(key) - 4) + key[-4:] if key else 'Not set'}")
             except FileNotFoundError as e:
-                print(f"Configuration error: {e}", file=sys.stderr)
-                print("Please configure ChatGDB using -k, -m, or -u options.", file=sys.stderr)
-                parser.print_help()
-                sys.exit(1)
+                print(f"  API Key: Not set ({e})")
+            try:
+                model = utils.get_model()
+                print(f"  Model: {model if model else 'Not set'}")
+            except FileNotFoundError as e:
+                print(f"  Model: Not set ({e})")
+            try:
+                url = utils.get_url()
+                print(f"  URL: {url if url else 'Not set'}")
+            except FileNotFoundError as e:
+                print(f"  URL: Not set ({e})")
+            print("\nUse 'chatgdb -h' for options to set or update these values.")
 
-    except ImportError:
-        print("Error: Could not import ChatGDB utilities. Ensure ChatGDB is installed correctly.", file=sys.stderr)
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr) # Print to stderr
+        sys.exit(1) # Exit with a non-zero status to indicate an error
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}", file=sys.stderr)
         sys.exit(1)
-
-    if args.key:
-        set_key(args.key)
-        print(f"API key set in {PATH}/.secret.txt")
-    if args.model:
-        set_model(args.model)
-        print(f"Model set to '{args.model}' in {PATH}/.model.txt")
-    if args.url:
-        set_url(args.url)
-        print(f"API URL set to '{args.url}' in {PATH}/.url.txt")
-
-    if not any([args.key, args.model, args.url]):
-        # This part will now likely be preceded by the check above if config files are missing
-        print("No configuration options provided. Current settings (if any) will be used.")
-        # parser.print_help() # Avoid printing help if config exists and no args given
-
 
 if __name__ == "__main__":
     main()
