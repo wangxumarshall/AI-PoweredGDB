@@ -1,4 +1,5 @@
 import lldb
+import sys # Added
 from chatgdb import utils
 
 
@@ -37,34 +38,41 @@ def chat(debugger, command, result, internal_dict):
         utils.chat_help()
         return
 
-    prev_command, generated_command_str = utils.chat_helper(command, prompt=COMMAND_PROMPT)
+    def lldb_printer(text_chunk):
+        # 'result' is SBCommandReturnObject, use sys.stdout for direct streaming
+        sys.stdout.write(text_chunk)
+        sys.stdout.flush()
+    
+    # global prev_command # Ensure this is declared if prev_command is module-level
+    # The chat_helper returns (full_assembled_command, full_assembled_command)
+    _discarded_prev_cmd, generated_cmd_to_execute = utils.chat_helper(command, prompt=COMMAND_PROMPT, print_callback=lldb_printer)
+    sys.stdout.write("\n") # Ensure a final newline
+    sys.stdout.flush()
+    
+    globals()['prev_command'] = generated_cmd_to_execute
+    
+    global chatgdb_ask_mode # Ensure global is used
 
-    global chatgdb_ask_mode
-    if chatgdb_ask_mode and generated_command_str and generated_command_str.strip():
-        result.PutStr(f"Suggested command: {generated_command_str}\n")
-        
-        # Using lldb.debugger.GetCommandInterpreter().HandleCommand() for input
-        input_script_command = f'script print(input("Execute? (y/n): ").lower().strip())'
-        return_obj = lldb.SBCommandReturnObject()
-        lldb.debugger.GetCommandInterpreter().HandleCommand(input_script_command, return_obj)
-        
-        response = ""
-        if return_obj.Succeeded():
-            # Clean up output, removing potential quotes and newlines
-            response = return_obj.GetOutput().strip().replace('"', '').replace("'", "").replace("\\n", "")
-        else:
-            result.PutStr("Error getting user input. Defaulting to no execution.\n")
-            response = "n" # Default to no if input fails
-
-        if response in ["y", "yes"]:
-            debugger.HandleCommand(generated_command_str)
-        else:
-            result.PutStr("Command not executed.\n")
-    else:
-        if generated_command_str and generated_command_str.strip(): # Ensure command is not empty
-            debugger.HandleCommand(generated_command_str)
-        elif not generated_command_str or not generated_command_str.strip():
-            result.PutStr("ChatLLDB received an empty command. Nothing to execute.\n")
+    if generated_cmd_to_execute: # Check if command is not empty
+        if chatgdb_ask_mode: 
+            # LLDB's input mechanism:
+            # The suggested command is already printed by the streaming callback.
+            # We need to prompt for y/n.
+            input_script_command = f'script print(input("Execute? (y/n): ").lower().strip())'
+            return_obj = lldb.SBCommandReturnObject()
+            lldb.debugger.GetCommandInterpreter().HandleCommand(input_script_command, return_obj)
+            response = "n" # Default to no
+            if return_obj.Succeeded():
+                response = return_obj.GetOutput().strip().replace("\n", "").replace("'", "").replace('"', '')
+            
+            if response in ["y", "yes"]:
+                debugger.HandleCommand(generated_cmd_to_execute)
+            else:
+                result.PutStr("Command not executed.\n") # Use result for feedback in LLDB
+        else: # agent mode
+            debugger.HandleCommand(generated_cmd_to_execute)
+    elif command != "help": # Don't print error for 'chat help' if it results in empty command
+         result.PutStr("LLM did not return a command or an error occurred.\n")
 
 
 def explain(debugger, command, result, internal_dict):
@@ -73,7 +81,14 @@ def explain(debugger, command, result, internal_dict):
     The explain command is used to generate explanations for either the
     previous command or a user query
     """
-    utils.explain_helper(prev_command, command, prompt=EXPLANATION_PROMPT)
+    def lldb_explain_printer(text_chunk):
+        sys.stdout.write(text_chunk)
+        sys.stdout.flush()
+
+    # Use globals().get to safely access prev_command
+    utils.explain_helper(globals().get('prev_command', ''), command, EXPLANATION_PROMPT, lldb_explain_printer)
+    sys.stdout.write("\n") # Ensure a final newline
+    sys.stdout.flush()
 
 
 def chat_set_mode(debugger, command_args_str, result, internal_dict):

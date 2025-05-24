@@ -1,6 +1,8 @@
 import gdb
+import sys # Added
 from chatgdb import utils
 from chatgdb import gdb_explorer # Added import
+from chatgdb import multi_stage_processor # Added
 
 prev_command = ""
 chatgdb_ask_mode = False # Added global variable
@@ -39,31 +41,49 @@ class GDBCommand(gdb.Command):
             utils.chat_help()
             return
 
-        prev_command, command = utils.chat_helper(arg, COMMAND_PROMPT)
+        def gdb_printer(text_chunk):
+            sys.stdout.write(text_chunk)
+            sys.stdout.flush()
 
-        global chatgdb_ask_mode
-        if chatgdb_ask_mode and command and command.strip():
-            try:
-                # Using Python's input() as suggested.
-                # gdb.write is used to ensure output is through GDB's channels.
-                gdb.write(f"Suggested command: {command}\n")
-                # We need to execute a python command in GDB to get input this way
-                # This is a common pattern for getting user input within GDB scripting
-                response_str = gdb.execute('pi print(input("Execute? (y/n): "))', to_string=True)
-                # response_str will be something like '"y"\n' or '"n"\n', so we need to clean it.
-                response = response_str.strip().lower().replace('"', '') 
-                if response in ["y", "yes"]:
-                    gdb.execute(command)
-                else:
-                    gdb.write("Command not executed.\n")
-            except Exception as e:
-                gdb.write(f"Error during confirmation: {e}\n")
-                gdb.write("Command not executed due to error.\n")
-        else:
-            if command and command.strip(): # Ensure command is not empty
-                gdb.execute(command)
-            elif not command or not command.strip():
-                 gdb.write("ChatGDB received an empty command. Nothing to execute.\n")
+        # Call the multi-stage processor
+        # The multi_stage_processor.generate_gdb_command_multi_stage function
+        # will use the gdb_printer callback for any streaming output.
+        # It's expected to handle its own newlines for streamed content.
+        generated_cmd_to_execute = multi_stage_processor.generate_gdb_command_multi_stage(arg, gdb_printer)
+        
+        # If the multi-stage processor returns a command, it's already printed (streamed).
+        # If it's a stub or has errors, it might print messages via the callback.
+        # We might still want a final newline if the callback didn't ensure one.
+        if not generated_cmd_to_execute.endswith("\n") and gdb_printer: # Check if callback was used
+             sys.stdout.write("\n")
+        sys.stdout.flush()
+
+
+        globals()['prev_command'] = generated_cmd_to_execute # Update prev_command
+        
+        global chatgdb_ask_mode # Ensure global is used if it's a module-level variable
+
+        # Ask mode logic uses generated_cmd_to_execute
+        if generated_cmd_to_execute: # Check if command is not empty
+            if chatgdb_ask_mode: 
+                try:
+                    # The command has already been printed by the streaming callback.
+                    response_str = gdb.execute(f'pi print(input("Execute? (y/n): "))', to_string=True)
+                    response = response_str.strip().lower().replace('"', '').replace("'", "")
+                    if response in ["y", "yes"]:
+                        gdb.execute(generated_cmd_to_execute)
+                    else:
+                        gdb.write("Command not executed.\n")
+                except Exception as e:
+                    gdb.write(f"Error during confirmation: {e}\n")
+                    gdb.write("Command not executed due to error.\n")
+            else: # agent mode
+                gdb.execute(generated_cmd_to_execute)
+        elif not arg == "help": # Don't print error for 'chat help' if it results in empty command
+             # The multi-stage processor should have printed an error message via the callback
+             # if it failed to generate a command. If it returned empty without printing,
+             # this message is a fallback.
+             gdb.write("Multi-stage processor did not return a command or an error occurred.\n")
 
 
 class ExplainCommand(gdb.Command):
@@ -84,7 +104,14 @@ class ExplainCommand(gdb.Command):
             arg (str): argument passed to commands
             from_tty (bool): whether command was invoked from from_tty
         """
-        utils.explain_helper(prev_command, arg, EXPLANATION_PROMPT)
+        def gdb_explain_printer(text_chunk):
+            sys.stdout.write(text_chunk)
+            sys.stdout.flush()
+        
+        # Use globals().get to safely access prev_command
+        utils.explain_helper(globals().get('prev_command', ''), arg, EXPLANATION_PROMPT, gdb_explain_printer)
+        sys.stdout.write("\n") # Ensure a final newline after streaming
+        sys.stdout.flush()
 
 
 GDBCommand()
@@ -185,10 +212,27 @@ def on_gdb_stop(event):
             "Focus on actionable GDB commands or areas to investigate. Example: 'Consider `step` / `next`. Examine variable X if its value seems off.'"
         )
         
-        llm_suggestion = utils.get_llm_response(prompt) 
-        gdb.write(f"ChatGDB Suggestion: {llm_suggestion}\n")
+        def gdb_stop_event_printer(text_chunk):
+            # Can't use gdb.write for streaming as it appends newlines.
+            # sys.stdout should work in GDB's Python environment.
+            sys.stdout.write(text_chunk)
+            sys.stdout.flush()
+
+        # get_llm_response now handles streaming via the callback
+        # and returns the full response or an "ERROR:" string.
+        # The callback handles printing, so no need to print llm_suggestion directly.
+        llm_suggestion = utils.get_llm_response(prompt, gdb_stop_event_printer)
+        sys.stdout.write("\n") # Ensure a final newline
+        sys.stdout.flush()
+        
+        # If llm_suggestion starts with "ERROR:", make_streaming_request already printed details
+        # via the callback and to sys.stderr. Nothing more needed here for that case.
+        # The old gdb.write(f"ChatGDB Suggestion: {llm_suggestion}\n") is removed.
 
     except Exception as e:
+        # This will catch errors from within on_gdb_stop itself, 
+        # or if get_llm_response (or underlying functions) re-raise an exception
+        # not caught by make_streaming_request's error handling.
         gdb.write(f"Error in ChatGDB context assistance: {str(e)}\n")
     finally:
         gdb.write("--- End Contextual Assistance ---\n")

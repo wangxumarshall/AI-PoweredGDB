@@ -1,4 +1,5 @@
 import json
+import sys # Added
 from posixpath import dirname
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -122,57 +123,95 @@ HEADERS = {
 }
 URL = get_url()
 
-def explain_helper(prev_command, command, prompt):
-    """Generates explanation for either the previous command or a user query
-
-    Params:
-    prev_command (str): previous command
-    command (str): user query
-    prompt (str): prompt to use for explanation
-    """
-    question = prompt + prev_command if command == "" else command
-    data = {"model": get_model(),
-            "messages": [{"role": "user",
-                          "content": question}]}
-    body, response = make_request(URL, HEADERS, data=bytes(json.dumps(data),
-                                                           encoding="utf-8"))
-    body = json.loads(body)
-    explanation = body['choices'][0]['message']['content']
-    print(explanation)
+def explain_helper(prev_command, current_user_query, explanation_prompt_prefix, print_callback):
+    """Generates explanation for either the previous command or a user query with streaming."""
+    question = explanation_prompt_prefix + prev_command if current_user_query == "" else current_user_query
+    data = {
+        "model": get_model(),
+        "messages": [{"role": "user", "content": question}],
+        "stream": True
+    }
+    # Errors are handled by make_streaming_request, which prints to stderr and callback
+    make_streaming_request(URL, HEADERS, data, print_callback)
 
 
-def chat_helper(command, prompt):
-    """Generates GDB/LLDB command based on user input
-
-    Params:
-    command (str): user input
-    prompt (str): prompt to use for command generation
-    """
-    data = {"model": get_model(),
-            "messages": [{"role": "user",
-                          "content": prompt + command}]}
-
-    body, response = make_request(URL, HEADERS, data=bytes(json.dumps(data),
-                                                           encoding="utf-8"))
-    body = json.loads(body)
-    command = body['choices'][0]['message']['content']
-    print(command)
-    # the first is technically also the previous command
-    return command, command
-
-def get_llm_response(full_prompt_string):
+def chat_helper(command, prompt, print_callback):
     data = {
         "model": get_model(), # Assumes get_model() is defined
-        "messages": [{"role": "user", "content": full_prompt_string}]
+        "messages": [{"role": "user", "content": prompt + command}],
+        "stream": True 
     }
+    
+    # URL, HEADERS are assumed to be defined globally in utils.py
+    full_command = make_streaming_request(URL, HEADERS, data, print_callback) 
+    
+    if full_command.startswith("ERROR:"):
+        # Error message already printed by make_streaming_request or callback
+        return "", "" 
+
+    # The first element of the tuple was previously the printed command,
+    # but now printing is handled by the callback.
+    # The second element is the fully assembled command for execution.
+    return full_command, full_command 
+
+# Ensure Request, urlopen, HTTPError, URLError, json, sys are imported
+# Ensure URL, HEADERS, get_model are available
+def make_streaming_request(api_url, headers_dict, request_data_dict, stream_print_callback):
+    full_response_content = ""
     try:
-        # Assuming make_request is defined and handles API call and errors
-        body, response = make_request(URL, HEADERS, data=bytes(json.dumps(data), encoding="utf-8"))
-        body = json.loads(body)
-        content = body['choices'][0]['message']['content']
-        return content.strip()
+        request_data_bytes = bytes(json.dumps(request_data_dict), encoding="utf-8")
+        req = Request(api_url, headers=headers_dict, data=request_data_bytes, method="POST")
+        
+        with urlopen(req, timeout=60) as response:
+            for line_bytes in response:
+                line = line_bytes.decode('utf-8').strip()
+                if line.startswith('data: '):
+                    chunk_json_str = line[len('data: '):]
+                    if chunk_json_str == "[DONE]":
+                        break
+                    try:
+                        chunk_data = json.loads(chunk_json_str)
+                        if chunk_data.get('choices') and len(chunk_data['choices']) > 0:
+                            delta = chunk_data['choices'][0].get('delta', {})
+                            content_chunk = delta.get('content')
+                            if content_chunk:
+                                full_response_content += content_chunk
+                                if stream_print_callback:
+                                    stream_print_callback(content_chunk)
+                    except json.JSONDecodeError:
+                        # In case of malformed JSON in a chunk, skip it and continue
+                        sys.stderr.write(f"Warning: Malformed JSON chunk skipped: {chunk_json_str}\n")
+                        continue 
+    except HTTPError as error:
+        err_msg = f"HTTP Error: {error.status} {error.reason}"
+        sys.stderr.write(f"{err_msg}\n")
+        if stream_print_callback: stream_print_callback(f"\nLLM API Error: {err_msg}\n")
+        return f"ERROR: {err_msg}"
+    except URLError as error:
+        err_msg = f"URL Error: {error.reason}"
+        sys.stderr.write(f"{err_msg}\n")
+        if stream_print_callback: stream_print_callback(f"\nLLM API Error: {err_msg}\n")
+        return f"ERROR: {err_msg}"
+    except TimeoutError:
+        err_msg = "LLM Request timed out"
+        sys.stderr.write(f"{err_msg}\n")
+        if stream_print_callback: stream_print_callback(f"\nLLM API Error: {err_msg}\n")
+        return f"ERROR: {err_msg}"
     except Exception as e:
-        # Print the error to stderr for better visibility in GDB/LLDB context
-        import sys
-        print(f"Error communicating with LLM: {str(e)}", file=sys.stderr)
-        return f"Error communicating with LLM: {str(e)}"
+        err_msg = f"General streaming request error: {str(e)}"
+        sys.stderr.write(f"{err_msg}\n")
+        if stream_print_callback: stream_print_callback(f"\nLLM API Error: {err_msg}\n")
+        return f"ERROR: {err_msg}"
+    
+    return full_response_content.strip()
+
+def get_llm_response(full_prompt_string, stream_print_callback=None):
+    data = {
+        "model": get_model(), # Assumes get_model() is defined
+        "messages": [{"role": "user", "content": full_prompt_string}],
+        "stream": True # Always stream for this function now
+    }
+    # make_streaming_request will handle printing chunks to stream_print_callback
+    # and will return the full assembled string or an "ERROR:" string.
+    full_response = make_streaming_request(URL, HEADERS, data, stream_print_callback)
+    return full_response
