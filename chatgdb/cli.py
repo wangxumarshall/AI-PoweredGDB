@@ -3,6 +3,7 @@ from os.path import abspath, dirname
 from inspect import getfile, currentframe
 from urllib.request import Request, urlopen
 import json
+import sys # Import sys for stderr
 
 PATH = dirname(abspath(getfile(currentframe())))
 
@@ -61,14 +62,45 @@ def main():
         help="Print the version of ChatGDB")
 
     args = parser.parse_args()
+
+    # Attempt to load existing config to check if files exist before writing
+    # This is more for robust initialization than just writing new files
+    try:
+        # These calls are primarily for their side effect of checking file existence if no args are given
+        # If utils.py's get_key/model/url are called at module load time for HEADERS/URL,
+        # an error might occur there first if files are missing.
+        # This depends on Python's import and execution order.
+        from chatgdb import utils # Ensure utils is imported to access its functions
+        if not any([args.key, args.model, args.url]):
+             # Check if essential config is missing if no arguments are passed to set them
+            try:
+                utils.get_key() 
+                utils.get_model()
+                utils.get_url()
+            except FileNotFoundError as e:
+                print(f"Configuration error: {e}", file=sys.stderr)
+                print("Please configure ChatGDB using -k, -m, or -u options.", file=sys.stderr)
+                parser.print_help()
+                sys.exit(1)
+
+    except ImportError:
+        print("Error: Could not import ChatGDB utilities. Ensure ChatGDB is installed correctly.", file=sys.stderr)
+        sys.exit(1)
+
     if args.key:
         set_key(args.key)
+        print(f"API key set in {PATH}/.secret.txt")
     if args.model:
         set_model(args.model)
+        print(f"Model set to '{args.model}' in {PATH}/.model.txt")
     if args.url:
         set_url(args.url)
+        print(f"API URL set to '{args.url}' in {PATH}/.url.txt")
+
     if not any([args.key, args.model, args.url]):
-        parser.print_help()
+        # This part will now likely be preceded by the check above if config files are missing
+        print("No configuration options provided. Current settings (if any) will be used.")
+        # parser.print_help() # Avoid printing help if config exists and no args given
 
 
 if __name__ == "__main__":

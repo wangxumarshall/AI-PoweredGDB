@@ -11,6 +11,7 @@ def get_key():
     """Gets api key from secret file
 
     Returns: (str) api key
+    Raises: FileNotFoundError: If the secret file is not found.
     """
     key = []
     secret = ""
@@ -23,10 +24,15 @@ def get_key():
         for k in key:
             if k.startswith("OPENAI_KEY"):
                 secret = k.split('"')[1::2]
+        if not secret: # Check if secret was actually found
+            raise FileNotFoundError(f"OPENAI_KEY not found in {path}")
     except FileNotFoundError:
-        print("Could not find api key. Please make sure you've run the CLI "
-              "tool and set up your model")
-        quit("Exiting...")
+        # Re-raise to be caught by the caller, or let it propagate
+        # Adding a more specific print here might be redundant if caller handles it well.
+        raise FileNotFoundError(
+            f"Could not find api key file at {path}. "
+            f"Please make sure you've run the CLI tool and set up your API key."
+        )
 
     return secret[0]
 
@@ -35,6 +41,7 @@ def get_model():
     """Gets model from model file
 
     Returns: (str) model
+    Raises: FileNotFoundError: If the model file is not found.
     """
     model = []
     model_name = ""
@@ -47,10 +54,13 @@ def get_model():
         for m in model:
             if m.startswith("MODEL"):
                 model_name = m.split('"')[1::2]
+        if not model_name: # Check if model_name was actually found
+            raise FileNotFoundError(f"MODEL not found in {path}")
     except FileNotFoundError:
-        print("Could not find model. Please make sure you've run the CLI "
-              "tool and set up your model")
-        quit("Exiting...")
+        raise FileNotFoundError(
+            f"Could not find model file at {path}. "
+            f"Please make sure you've run the CLI tool and set up your model."
+        )
 
     return model_name[0]
 
@@ -58,6 +68,7 @@ def get_url():
     """Gets api url from url file
 
     Returns: (str) url
+    Raises: FileNotFoundError: If the url file is not found.
     """
     url = []
     url_name = ""
@@ -70,10 +81,13 @@ def get_url():
         for u in url:
             if u.startswith("URL"):
                 url_name = u.split('"')[1::2]
+        if not url_name: # Check if url_name was actually found
+            raise FileNotFoundError(f"URL not found in {path}")
     except FileNotFoundError:
-        print("Could not find url. Please make sure you've run the CLI "
-              "tool and set up your url")
-        quit("Exiting...")
+        raise FileNotFoundError(
+            f"Could not find url file at {path}. "
+            f"Please make sure you've run the CLI tool and set up your URL."
+        )
     return url_name[0]
 
 
@@ -117,11 +131,30 @@ def chat_help():
         "but typing a query after will generate an answer for it.\n\n")
 
 
-HEADERS = {
-    "Authorization": "Bearer " + get_key(),
-    "Content-Type": "application/json"
-}
-URL = get_url()
+# It's crucial to handle potential FileNotFoundError when initializing these global variables.
+# This might require restructuring how these are loaded, perhaps lazily or within a try-except block
+# in the functions that use them, or ensuring CLI setup always creates these files.
+
+# Option 1: Lazy loading within functions that use HEADERS/URL (more robust)
+# Option 2: Global try-except (simplest for now, but exits if config missing at import time)
+
+try:
+    HEADERS = {
+        "Authorization": "Bearer " + get_key(),
+        "Content-Type": "application/json"
+    }
+    URL = get_url()
+except FileNotFoundError as e:
+    # This print will occur when utils.py is imported and config files are missing.
+    # For CLI, this is okay. For GDB/LLDB scripts, this might be too early or disruptive.
+    # Consider moving initialization into a function called by GDB/LLDB after setup.
+    print(f"Error initializing ChatGDB: {e}", file=sys.stderr)
+    # Depending on the desired behavior, you might re-raise, or set HEADERS/URL to None,
+    # and let functions like explain_helper/chat_helper handle it.
+    # For now, let's allow the import but subsequent calls will fail if HEADERS/URL are not set.
+    HEADERS = None
+    URL = None
+
 
 def explain_helper(prev_command, current_user_query, explanation_prompt_prefix, print_callback):
     """Generates explanation for either the previous command or a user query with streaming."""
