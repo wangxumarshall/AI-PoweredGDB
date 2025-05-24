@@ -1,6 +1,12 @@
 import gdb
 import json # Ensure json is imported
+import sys # Added
 from chatgdb import utils # Assuming utils.py contains get_model, get_key, etc.
+
+def _explorer_printer(text_chunk):
+    # Using sys.stdout for direct printing in GDB context, as gdb.write adds newlines
+    sys.stdout.write(text_chunk)
+    sys.stdout.flush()
 
 # Placeholder for initial command generation - can be improved later
 def _generate_initial_command(query):
@@ -13,7 +19,12 @@ def _generate_initial_command(query):
     
     # Call the LLM to get the suggested initial command.
     # utils.get_llm_response is assumed to handle the API call and return the text response.
-    suggested_command = utils.get_llm_response(initial_command_prompt)
+    # The callback will handle printing the streamed response.
+    sys.stdout.write("ChatGDB Explorer (Initial Command Suggestion): ") # Prefix for clarity
+    sys.stdout.flush()
+    suggested_command = utils.get_llm_response(initial_command_prompt, _explorer_printer)
+    sys.stdout.write("\n") # Ensure a final newline after streaming
+    sys.stdout.flush()
     
     # Basic cleaning: remove potential quotes if LLM wraps output, though prompt tries to prevent this.
     if suggested_command.startswith('"') and suggested_command.endswith('"'):
@@ -79,9 +90,14 @@ def explore_state(initial_query, max_iterations=3):
             "If the previous command resulted in an error, consider what might have caused it (e.g., invalid syntax, non-existent variable) and suggest a corrected command or a different approach."
         )
 
-        llm_suggestion = utils.get_llm_response(prompt_for_llm)
-        gdb.write(f"LLM Suggestion (raw):\n{llm_suggestion}\n")
-
+        sys.stdout.write("ChatGDB Explorer (Next Step Suggestion): ") # Prefix for clarity
+        sys.stdout.flush()
+        llm_suggestion = utils.get_llm_response(prompt_for_llm, _explorer_printer)
+        sys.stdout.write("\n") # Ensure a final newline
+        sys.stdout.flush()
+        
+        # current_llm_input_command will hold the fully assembled response.
+        # If it starts with "ERROR:", make_streaming_request already printed details.
         current_llm_input_command = llm_suggestion.strip() 
 
         if current_llm_input_command.startswith("HYPOTHESIS:"):
